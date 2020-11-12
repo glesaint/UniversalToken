@@ -102,6 +102,12 @@ contract ERC1400TokensValidator is IERC1400TokensValidator, Pausable, Allowliste
   // Mapping from (hash, nonce) to hold ID.
   mapping(bytes32 => mapping(uint256 => bytes32)) internal _holdIds;
 
+  // Mapping from (token, partition) to partition expiry activation status.
+  mapping(address => mapping(bytes32 => bool)) internal _tokenPartitionExpiryActivated;
+
+  // Mapping from (token, patition) to partition expiry timestamp
+  mapping(address => mapping(bytes32 => uint256)) internal _tokenPartitionExpiryTimestamp;
+
   event HoldCreated(
     address indexed token,
     bytes32 indexed holdId,
@@ -354,9 +360,118 @@ contract ERC1400TokensValidator is IERC1400TokensValidator, Pausable, Allowliste
       }
     }
     
+    //Do not validate transfers when the partition has expired
+    if (_getPartitionExpiryActivated(token, partition)) {
+      if (_getPartitionExpiryStatus(token, partition)) {
+        return (false, "");
+      }
+    }
     return (true, "");
   }
 
+  /**
+   * @dev Get partition expiry activation status
+   * @param token Address of the token.
+   * @param partition Name of the partition.
+   * @return Expiry activation status of the partition.
+   */
+  function getPartitionExpiryActivated(address token, bytes32 partition) external view returns (bool) {
+    return _getPartitionExpiryActivated(token, partition);
+  }
+  
+  /**
+   * @dev Get partition expiry status
+   * @param token Address of the token.
+   * @param partition Name of the partition.
+   * @return Expiry status of the partition.
+   */
+  function getPartitionExpiryStatus(address token, bytes32 partition) external view returns (bool) {
+    return _getPartitionExpiryStatus(token,partition);
+  }
+  
+  /**
+   * @dev Get partition expiry timestamp
+   * @param token Address of the token.
+   * @param partition Name of the partition.
+   * @return Expiry timestamp of the partition.
+   */
+  function getPartitionExpiryTimestamp(address token, bytes32 partition) external view returns (uint256) {
+    return _getPartitionExpiryTimestamp(token,partition);
+  }
+  
+  /**
+   * @dev Set partition expiry activation timestamp
+   * @param token Address of the token.
+   * @param partition Name of the partition.
+   * @param expiryTimestamp Expiry timestamp of the partition.
+   * @return Expiry activation status of the partition.
+   */
+  function setPartitionExpiryTimestamp(
+    address token,
+    bytes32 partition,
+    uint256 expiryTimestamp
+  )
+    external
+    onlyTokenController(token)
+  {
+    require(_getPartitionExpiryActivated(token, partition) == false, "Partition expiry is already activated");
+    require(expiryTimestamp > now, "Partition expiry timestamp must be in the future");
+
+    _tokenPartitionExpiryActivated[token][partition] = true;
+    _tokenPartitionExpiryTimestamp[token][partition] = expiryTimestamp;
+  }
+
+  /**
+   * @dev Allow controllers to move expired tokens
+   * @param token Address of the token.
+   * @param partition Name of the partition.
+   * @param recipient Address of the recipient.
+   * @return Transfer status.
+   */
+  function transferExpiredTokens(
+    address token,
+    bytes32 partition,
+    address recipient
+  )
+    external
+    onlyTokenController(token)
+  {
+    require(_getPartitionExpiryStatus(token, partition), "Partition must have expired");
+    // todo: move tokens
+  }
+
+  /**
+   * @dev Get partition expiry activation status
+   * @param token Address of the token.
+   * @param partition Name of the partition.
+   * @return Expiry activation status of the partition.
+   */
+  function _getPartitionExpiryActivated(address token, bytes32 partition) internal view returns (bool) {
+    return _tokenPartitionExpiryActivated[token][partition];
+  }
+  
+  /**
+   * @dev Get partition expiry status
+   * @param token Address of the token.
+   * @param partition Name of the partition.
+   * @return Expiry status of the partition.
+   */
+  function _getPartitionExpiryStatus(address token, bytes32 partition) internal view returns (bool) {
+    require(_getPartitionExpiryActivated(token, partition), "Partition expiry is not activated");
+    return _tokenPartitionExpiryTimestamp[token][partition] < now;
+  }
+  
+  /**
+   * @dev Get partition expiry timestamp
+   * @param token Address of the token.
+   * @param partition Name of the partition.
+   * @return Expiry timestamp of the partition.
+   */
+  function _getPartitionExpiryTimestamp(address token, bytes32 partition) internal view returns (uint256) {
+    require(_getPartitionExpiryActivated(token, partition), "Partition expiry is not activated");
+    return _tokenPartitionExpiryTimestamp[token][partition];
+  }
+  
   /**
    * @dev Get granularity for a given partition.
    * @param token Address of the token.

@@ -1,0 +1,13 @@
+version: "3"
+services:
+  UniversalToken:
+    image: node:12
+    container_name: UniversalToken
+    #environment:
+    volumes:
+      - .:/usr/src/app:cached
+    entrypoint: |
+      bash -c "cd /usr/src/app
+      nvm use
+      yarn
+      tail -f /dev/null"

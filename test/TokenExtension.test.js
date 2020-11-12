@@ -1,4 +1,4 @@
-const { expectRevert } = require("@openzeppelin/test-helpers");
+const { expectRevert, time } = require("@openzeppelin/test-helpers");
 const { soliditySha3 } = require("web3-utils");
 const { advanceTimeAndBlock } = require("./utils/time");
 const { newSecretHashPair, newHoldId } = require("./utils/crypto");
@@ -383,6 +383,207 @@ contract("ERC1400HoldableCertificate with validator hook", function ([
     );
   });
 
+  // PARTITION EXPIRY
+  describe("partition-expiry", function () {
+   beforeEach(async function () {
+      const time = parseInt(await this.clock.getTime());
+      this.validTimestamp = time+SECONDS_IN_AN_HOUR;
+      this.invalidTimestamp = time-1;
+      
+      await this.token.issueByPartition(
+        partition1,
+        tokenHolder,
+        issuanceAmount,
+        VALID_CERTIFICATE,
+        { from: controller }
+      )
+      await assertIsTokenController(
+        this.validatorContract,
+        this.token,
+        tokenController1,
+        false,
+      )
+      await addTokenController(
+        this.validatorContract,
+        this.token,
+        controller,
+        tokenController1
+      )
+      await assertIsTokenController(
+        this.validatorContract,
+        this.token,
+        tokenController1,
+        true,
+      )
+    });
+
+   describe("when a partition has no expiry set", function () {
+      it("returns false when getting the expiry activation status", async function () {
+        const partitionExpiryActivated = await this.validatorContract.getPartitionExpiryActivated(this.token.address, partition1);
+        assert.equal(partitionExpiryActivated, false);
+      });
+      it("reverts when getting the expiry status", async function () {
+        await expectRevert.unspecified(this.validatorContract.getPartitionExpiryStatus(this.token.address, partition1));
+      });
+      it("reverts when getting the expiry timestamp", async function () {
+        await expectRevert.unspecified(this.validatorContract.getPartitionExpiryTimestamp(this.token.address, partition1));
+      });
+      describe("can still call transferByPartition", function () {
+        const transferAmount = 300;
+        it("transfers the requested amount", async function () {
+          await assertBalanceOf(
+            this.token,
+            tokenHolder,
+            partition1,
+            issuanceAmount
+          );
+          await assertBalanceOf(this.token, recipient, partition1, 0);
+
+          await this.token.transferByPartition(
+            partition1,
+            recipient,
+            transferAmount,
+            VALID_CERTIFICATE,
+            { from: tokenHolder }
+          );
+
+          await assertBalanceOf(
+            this.token,
+            tokenHolder,
+            partition1,
+            issuanceAmount - transferAmount
+          );
+          await assertBalanceOf(
+            this.token,
+            recipient,
+            partition1,
+            transferAmount
+          );
+        });
+      });
+      describe("only controllers can set an expiry timestamp", function () {
+        it("allows controllers to set a valid expiry timestamp", async function () {
+          const logs = await this.validatorContract.setPartitionExpiryTimestamp(this.token.address, partition1, this.validTimestamp, { from: tokenController1 });
+          const expiryActivated = await this.validatorContract.getPartitionExpiryActivated(this.token.address, partition1);
+          assert.equal(expiryActivated, true);
+        });
+        it("returns activated when a controller has set a valid expiry timestamp", async function () {
+          const logs = await this.validatorContract.setPartitionExpiryTimestamp(this.token.address, partition1, this.validTimestamp, { from: tokenController1 });
+          const expiryActivated = await this.validatorContract.getPartitionExpiryActivated(this.token.address, partition1);
+          assert.equal(expiryActivated, true);
+        });
+        it("returns the expiry timestamp when a controller has set a valid expiry timestamp", async function () {
+          const logs = await this.validatorContract.setPartitionExpiryTimestamp(this.token.address, partition1, this.validTimestamp, { from: tokenController1 });
+          const expiryTimestamp = await this.validatorContract.getPartitionExpiryTimestamp(this.token.address, partition1);
+          assert.equal(expiryTimestamp, this.validTimestamp);
+        });
+        it("reverts when controllers set an invalid expiry timestamp", async function () {
+          await expectRevert.unspecified(this.validatorContract.setPartitionExpiryTimestamp(this.token.address, partition1, this.invalidTimestamp, { from: tokenController1 }));
+        });
+        it("reverts when partition expiry is already activated", async function () {
+          const logs = await this.validatorContract.setPartitionExpiryTimestamp(this.token.address, partition1, this.validTimestamp, { from: tokenController1 });
+          await expectRevert.unspecified(this.validatorContract.setPartitionExpiryTimestamp(this.token.address, partition1, this.invalidTimestamp, { from: tokenController1 }));
+        });
+        it("reverts when non-controllers set a expiry timestamp", async function () {
+          await expectRevert.unspecified(this.validatorContract.setPartitionExpiryTimestamp(this.token.address, partition1, this.invalidTimestamp, {from: unknown }));
+        });
+      });
+   });
+
+   describe("when a partition has an expiry set", function () {
+     beforeEach(async function () {
+      await this.validatorContract.setPartitionExpiryTimestamp(this.token.address, partition1, this.validTimestamp, { from: tokenController1 })
+     });
+
+    describe("when the partition has not expired", function () {
+      it("returns true when getting the expiry activation status", async function () {
+        const partitionExpiryActivated = await this.validatorContract.getPartitionExpiryActivated(this.token.address, partition1);
+        assert.equal(partitionExpiryActivated, true);
+      });
+      it("returns false when getting the expiry status", async function () {
+        const partitionExpiryStatus = await this.validatorContract.getPartitionExpiryStatus(this.token.address, partition1);
+        assert.equal(partitionExpiryStatus, false);
+      });
+      it("returns the expiry time when getting the expirty timestamp", async function () {
+        const partitionExpiryTimestamp = await this.validatorContract.getPartitionExpiryTimestamp(this.token.address, partition1);
+        assert.equal(partitionExpiryTimestamp, this.validTimestamp);
+      });
+      describe("can still call transferByPartition", function () {
+        const transferAmount = 300;
+        it("transfers the requested amount", async function () {
+          await assertBalanceOf(
+            this.token,
+            tokenHolder,
+            partition1,
+            issuanceAmount
+          );
+          await assertBalanceOf(this.token, recipient, partition1, 0);
+
+          await this.token.transferByPartition(
+            partition1,
+            recipient,
+            transferAmount,
+            VALID_CERTIFICATE,
+            { from: tokenHolder }
+          );
+
+          await assertBalanceOf(
+            this.token,
+            tokenHolder,
+            partition1,
+            issuanceAmount - transferAmount
+          );
+          await assertBalanceOf(
+            this.token,
+            recipient,
+            partition1,
+            transferAmount
+          );
+        });
+      });
+    });
+
+    describe("when the partition has expired", function () {
+      beforeEach(async function () {
+        await time.increaseTo(this.validTimestamp+1)
+      });
+      it("returns true when getting the expiry activation status", async function () {
+        const partitionExpiryActivated = await this.validatorContract.getPartitionExpiryActivated(this.token.address, partition1);
+        assert.equal(partitionExpiryActivated, true);
+      });
+      it("returns true when getting the expiry status", async function () {
+        const partitionExpiryStatus = await this.validatorContract.getPartitionExpiryStatus(this.token.address, partition1);
+        assert.equal(partitionExpiryStatus, true);
+      });
+      it("returns the expiry time when getting the expirty timestamp", async function () {
+        const partitionExpiryTimestamp = await this.validatorContract.getPartitionExpiryTimestamp(this.token.address, partition1);
+        assert.equal(partitionExpiryTimestamp, this.validTimestamp);
+      });
+      describe("prevents transferByPartition", function () {
+        const transferAmount = 300;
+        it("reverts when transfering the requested amount", async function () {
+          await assertBalanceOf(
+            this.token,
+            tokenHolder,
+            partition1,
+            issuanceAmount
+          );
+          await assertBalanceOf(this.token, recipient, partition1, 0);
+
+          await expectRevert.unspecified(this.token.transferByPartition(
+            partition1,
+            recipient,
+            transferAmount,
+            VALID_CERTIFICATE,
+            { from: tokenHolder }
+          ));
+        });
+      });
+    });
+  });
+
+  });  
+  
   // HOOKS
   describe("setTokenExtension", function () {
     describe("when the caller is the contract owner", function () {
